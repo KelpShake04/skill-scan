@@ -1,0 +1,6 @@
+.git
+.claude
+scan
+__pycache__
+*.pptx
+test_*.py

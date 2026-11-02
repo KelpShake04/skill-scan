@@ -13,6 +13,31 @@ python3 scanner.py <폴더>  # CLI
 
 웹 UI 입력: GitHub 저장소 주소, 홈 폴더 안의 폴더, 설치된 skill 전체(`~/.claude/skills`), 악성 샘플 데모.
 
+## Docker로 실행 (다른 컴퓨터)
+
+Docker(또는 OrbStack·Docker Desktop)만 있으면 된다. Windows·macOS·Linux, x86·ARM 모두 소스에서 빌드한다.
+
+```
+git clone https://github.com/KelpShake04/skill-scan.git
+cd skill-scan
+docker compose up -d --build     # http://localhost:8000
+docker compose down              # 중지 (기준선은 볼륨에 남음, 지우려면 down -v)
+```
+
+| 환경변수 | 기본값 | 용도 |
+|---|---|---|
+| `PORT` | `8000` | 접속 포트 (호스트·컨테이너 같은 값으로 맞춰짐) |
+| `SKILLS_DIR` | `~/.claude/skills` | '내 PC에 설치된 skill 전체'로 점검할 폴더 (읽기 전용 마운트) |
+| `SCAN_DIR` | `./scan` | 임의 폴더 점검용. UI에 `~/scan` 입력 (읽기 전용 마운트) |
+| `SKILL_SCAN_OLLAMA` | `http://host.docker.internal:11434` | LLM 재판정용 Ollama 주소 |
+| `SKILL_SCAN_MODEL` | `qwen3:8b` | Ollama 모델 |
+
+예: `PORT=8080 SCAN_DIR=~/Downloads/some-skill docker compose up -d`
+Windows PowerShell: `$env:SKILLS_DIR="$HOME\.claude\skills"; docker compose up -d --build`
+
+- LLM 재판정은 선택 기능이다. Ollama가 없으면 체크하지 않으면 된다. Linux에서 호스트 Ollama를 쓰려면 Ollama를 `OLLAMA_HOST=0.0.0.0`으로 띄워야 컨테이너에서 접근된다.
+- 보안 기본값: non-root(uid 1000), 읽기 전용 루트 파일시스템, `cap_drop: ALL`, `no-new-privileges`, 점검 대상은 읽기 전용 마운트, 호스트 `127.0.0.1`에만 공개. Host 헤더 검증은 인증이 아니므로 포트를 LAN(`0.0.0.0`)에 열지 말 것.
+
 ## 구성
 
 - `scanner.py` 규칙 엔진 (9개 범주, skill별 0~100점, 파일별 SHA-256, MCP 설정 점검). CLI는 `--json` 지원

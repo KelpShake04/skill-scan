@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 *.pptx
 history.db
+scan/*
+!scan/.gitkeep

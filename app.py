@@ -25,6 +25,8 @@ def resolve(target):
     if target == "@sample":
         return [scan(os.path.join(here, "samples", "evil-skill"))], None
     if target == "@installed":
+        if not os.path.isdir(SKILLS):
+            raise ValueError(f"설치된 skill 폴더가 없습니다: {SKILLS}")
         return scan_each(SKILLS), None
     if GH_RE.match(target):
         tmp = tempfile.mkdtemp(prefix="skillscan-")
@@ -89,4 +91,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    # container sets 0.0.0.0; the host side must still publish only on 127.0.0.1 (see compose.yaml)
+    ThreadingHTTPServer((os.environ.get("SKILL_SCAN_BIND", "127.0.0.1"), PORT), H).serve_forever()
