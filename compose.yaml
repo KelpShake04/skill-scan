@@ -1,0 +1,28 @@
+services:
+  skill-scan:
+    build: .
+    image: skill-scan:latest
+    ports:
+      # 127.0.0.1에만 공개: Host 헤더 검증은 인증이 아니므로 LAN에 열지 말 것.
+      # 호스트 포트와 컨테이너 포트를 같게 둬야 Host 헤더 검증을 통과함.
+      - "127.0.0.1:${PORT:-8000}:${PORT:-8000}"
+    environment:
+      SKILL_SCAN_PORT: ${PORT:-8000}
+      SKILL_SCAN_OLLAMA: ${SKILL_SCAN_OLLAMA:-http://host.docker.internal:11434}
+      SKILL_SCAN_MODEL: ${SKILL_SCAN_MODEL:-qwen3:8b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${SKILLS_DIR:-~/.claude/skills}:/home/app/.claude/skills:ro   # '내 PC에 설치된 skill 전체'
+      - ${SCAN_DIR:-./scan}:/home/app/scan:ro                          # UI에 ~/scan 입력
+      - pins:/home/app/.skill-scan                                    # 해시 기준선 유지
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  pins:

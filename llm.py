@@ -6,7 +6,8 @@ import urllib.request
 
 from scanner import SECRET_RE
 
-URL = "http://127.0.0.1:11434/api/chat"  # fixed local address: file contents never leave the machine
+# operator-set only (env), never from a request; point it at a local/LAN Ollama so file contents stay in-house
+URL = os.environ.get("SKILL_SCAN_OLLAMA", "http://127.0.0.1:11434").rstrip("/") + "/api/chat"
 MODEL = os.environ.get("SKILL_SCAN_MODEL", "qwen3:8b")
 VERDICTS = {"malicious", "suspicious", "benign"}
 SYSTEM = (
