@@ -15,10 +15,16 @@ python3 scanner.py <폴더>  # CLI
 
 ## 구성
 
-- `scanner.py` 규칙 엔진 (8개 범주, 14개 규칙, skill별 0~100점)
-- `app.py` 웹 UI·API (127.0.0.1 전용, Host 헤더 검증, 경로·입력 제한)
+- `scanner.py` 규칙 엔진 (9개 범주, skill별 0~100점, 파일별 SHA-256, MCP 설정 점검). CLI는 `--json` 지원
+- `pins.py` 해시 기준선: 처음 점검 때 저장(`~/.skill-scan/pins.json`), 이후 바뀐·추가·삭제된 파일을 '변경됨'으로 표시
+- `llm.py` 로컬 Ollama(`qwen3:8b`, 환경변수 `SKILL_SCAN_MODEL`)로 상위 8건 재판정. 참고용이며 점수에 반영하지 않음(점검 대상 문서가 판정 LLM을 속일 수 있으므로). 데이터는 로컬 밖으로 나가지 않음
+- `app.py` 웹 UI·API (127.0.0.1 전용, Host 헤더 검증, 경로·입력 제한, `SKILL_SCAN_PORT`로 포트 변경). UI에서 JSON/HTML 리포트 저장
 - `samples/evil-skill` 데모용 악성 패턴 샘플 (텍스트일 뿐, 실행하지 말 것)
-- `test_scanner.py` 테스트: `python3 -c "import test_scanner as t; [getattr(t,n)() for n in dir(t) if n.startswith('test_')]"`
+- 테스트: `python3 -c "import test_scanner as a, test_features as b; [getattr(m,n)() for m in (a,b) for n in dir(m) if n.startswith('test_')]"`
+
+### MCP 설정 점검 규칙
+
+`.mcp.json` 등의 `mcpServers`에서: 셸로 실행(`MCP-SHELL`), 버전 미고정 `npx`/`uvx` 패키지(`MCP-UNPIN`), 평문 http 주소(`MCP-HTTP`), 외부 원격 서버(`MCP-REMOTE`), 설정에 직접 적힌 키·토큰(`MCP-SECRET`).
 
 ## 한계
 
