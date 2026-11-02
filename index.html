@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Skill Scan</title>
+<style>
+:root{--bg:#f5f6fa;--card:#fff;--fg:#1c2233;--mute:#6b7287;--line:#e4e7ef;--accent:#3b5bdb;--code:#f1f3f9;
+--hi:#d63b3b;--hi-bg:#fdecec;--mid:#d98a00;--mid-bg:#fff4dd;--ok:#2b9a5b;--ok-bg:#e5f6ec}
+@media(prefers-color-scheme:dark){:root{--bg:#10131c;--card:#181c28;--fg:#e6e9f2;--mute:#8d95ab;--line:#272d3d;--accent:#7b93ff;--code:#0f121a;
+--hi:#ff6b6b;--hi-bg:#3a1b1f;--mid:#ffb84d;--mid-bg:#3a2d14;--ok:#4cc88a;--ok-bg:#15301f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif}
+main{max-width:880px;margin:0 auto;padding:32px 18px 64px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+header svg{width:40px;height:40px;flex:none}
+h1{margin:0;font-size:26px;letter-spacing:-.5px}
+.sub{color:var(--mute);margin:2px 0 22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.bar{display:flex;gap:10px}
+input[type=text]{flex:1;min-width:0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:inherit}
+input[type=text]:focus{outline:2px solid var(--accent);outline-offset:-1px}
+button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:10px 14px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;padding:10px 22px}
+button:disabled{opacity:.55;cursor:wait}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chips button{border-radius:99px;font-size:13.5px;padding:6px 14px}
+.hint{color:var(--mute);font-size:13px;margin:10px 0 0}
+#sum{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:22px 0 8px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.tile b{display:block;font-size:26px;line-height:1.1}.tile span{color:var(--mute);font-size:13px}
+.tile.hi b{color:var(--hi)}.tile.mid b{color:var(--mid)}.tile.ok b{color:var(--ok)}
+.tools{display:flex;justify-content:space-between;align-items:center;margin:14px 2px 6px;color:var(--mute);font-size:13px}
+.res{border-left:5px solid var(--ok);padding:0;margin:10px 0;overflow:hidden}
+.res.hi{border-left-color:var(--hi)}.res.mid{border-left-color:var(--mid)}
+summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:13px 16px}
+summary::-webkit-details-marker{display:none}
+summary .name{font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+summary .meta{color:var(--mute);font-size:12.5px;white-space:nowrap}
+.badge{font-size:12px;font-weight:700;padding:2px 10px;border-radius:99px;background:var(--ok-bg);color:var(--ok)}
+.hi .badge{background:var(--hi-bg);color:var(--hi)}.mid .badge{background:var(--mid-bg);color:var(--mid)}
+.meter{width:110px;height:8px;background:var(--line);border-radius:4px;overflow:hidden;flex:none}
+.meter i{display:block;height:100%;background:var(--ok)}.hi .meter i{background:var(--hi)}.mid .meter i{background:var(--mid)}
+.score{font-weight:700;width:30px;text-align:right}
+.body{padding:2px 16px 14px;border-top:1px solid var(--line)}
+.f{padding:12px 0;border-bottom:1px dashed var(--line)}.f:last-child{border:0}
+.f .t{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.id{font:600 11.5px ui-monospace,Menlo,monospace;background:var(--code);padding:2px 8px;border-radius:6px}
+.cat{font-size:12px;color:var(--mute)}
+.loc{font:12px ui-monospace,Menlo,monospace;color:var(--accent)}
+pre{margin:8px 0 6px;padding:9px 12px;background:var(--code);border-radius:8px;overflow-x:auto;font:12.5px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all}
+.fix{color:var(--mute);font-size:13px}
+.empty{color:var(--mute);padding:14px 0}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:8px}
+@keyframes s{to{transform:rotate(360deg)}}
+.msg{margin:22px 0;color:var(--mute)}.err{color:var(--hi)}
+@media(max-width:600px){#sum{grid-template-columns:repeat(2,1fr)}.meter{display:none}.bar{flex-direction:column}}
+</style>
+<main>
+<header>
+  <svg viewBox="0 0 40 40"><path d="M20 3 5 9v10c0 9.5 6.4 16.3 15 18 8.6-1.7 15-8.5 15-18V9z" fill="#3b5bdb"/><path d="m13 20 5 5 9-10" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <h1>Skill Scan</h1>
+</header>
+<p class="sub">AI skill·플러그인 공급망 보안 검사기 — 설치 전에 숨은 프롬프트 인젝션, 데이터 유출, 키 탈취, 원격 실행을 찾습니다. 코드는 실행하지 않습니다.</p>
+
+<div class="card">
+  <div class="bar">
+    <input type="text" id="t" placeholder="https://github.com/owner/repo  또는  ~/폴더/경로" autofocus>
+    <button class="primary" id="go">점검</button>
+  </div>
+  <div class="chips">
+    <button data-t="@installed">🖥 내 PC에 설치된 skill 전체</button>
+    <button data-t="@sample">☠ 악성 샘플 (데모)</button>
+  </div>
+  <p class="hint">GitHub 저장소(공개) · 홈 폴더 안의 폴더만 입력할 수 있습니다. 저장소는 내려받는 데 수십 초 걸릴 수 있습니다.</p>
+</div>
+
+<div id="sum"></div>
+<div id="out"></div>
+</main>
+<script>
+const $=s=>document.querySelector(s), out=$('#out'), sum=$('#sum');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const cls=l=>l==='위험'?'hi':l==='주의'?'mid':'ok';
+let busy=false, hideOk=true, last=null;
+
+async function run(target){
+  if(busy||!target.trim())return; busy=true;
+  document.querySelectorAll('button').forEach(b=>b.disabled=true);
+  sum.innerHTML=''; out.innerHTML='<p class="msg"><span class="spin"></span>점검 중...</p>';
+  try{
+    const r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target})});
+    const d=await r.json();
+    if(d.error){out.innerHTML=`<p class="msg err">${esc(d.error)}</p>`;}
+    else{last=d.results;hideOk=d.results.length>6;render();}
+  }catch(e){out.innerHTML='<p class="msg err">요청에 실패했습니다.</p>';}
+  busy=false; document.querySelectorAll('button').forEach(b=>b.disabled=false);
+}
+
+function finding(f){return `<div class="f"><div class="t"><span class="id">${esc(f.id)}</span><b>${esc(f.desc)}</b></div>
+<div class="cat">${esc(f.cat)} · <span class="loc">${esc(f.file)}:${f.line}</span> · ${f.count}곳</div>
+<pre>${esc(f.snippet)}</pre><div class="fix">조치: ${esc(f.fix)}</div></div>`;}
+
+function card(x){const c=cls(x.level);
+  return `<details class="card res ${c}"><summary><span class="badge">${esc(x.level)}</span><span class="name">${esc(x.name)}</span>
+  <span class="meta">파일 ${x.files} · 탐지 ${x.findings.length}</span><span class="meter"><i style="width:${x.score}%"></i></span><span class="score">${x.score}</span></summary>
+  <div class="body">${x.findings.map(finding).join('')||'<p class="empty">탐지된 신호 없음 (안전을 보장하지는 않음)</p>'}</div></details>`;}
+
+function render(){
+  const n=l=>last.filter(x=>x.level===l).length;
+  sum.innerHTML=[['점검 대상',last.length,''],['위험',n('위험'),'hi'],['주의',n('주의'),'mid'],['양호',n('양호'),'ok']]
+    .map(([k,v,c])=>`<div class="tile ${c}"><b>${v}</b><span>${k}</span></div>`).join('');
+  const shown=hideOk?last.filter(x=>x.level!=='양호'):last;
+  out.innerHTML=(last.length>6?`<div class="tools"><span>점수 높은 순</span><label><input type="checkbox" id="h" ${hideOk?'checked':''}> 양호 숨기기</label></div>`:'')+
+    (shown.map(card).join('')||'<p class="msg">위험·주의 항목이 없습니다.</p>');
+  const h=$('#h'); if(h)h.onchange=()=>{hideOk=h.checked;render();};
+  const first=out.querySelector('details'); if(first&&last.length<=3)first.open=true;
+}
+
+$('#go').onclick=()=>run($('#t').value);
+$('#t').onkeydown=e=>{if(e.key==='Enter')run(e.target.value);};
+document.querySelectorAll('.chips button').forEach(b=>b.onclick=()=>run(b.dataset.t));
+</script>
