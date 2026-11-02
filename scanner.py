@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import re
 
@@ -57,32 +59,78 @@ def mask(s):
     return SECRET_RE.sub("[REDACTED]", s)[:110]
 
 
+def scan_mcp(text, rel):
+    """Check MCP server definitions (mcpServers in .mcp.json / plugin.json) for risky launch settings."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    if not isinstance(servers, dict):
+        return []
+    out = []
+
+    def add(name, rid, w, desc, fix, snip):
+        i = text.find(json.dumps(name))
+        out.append({"id": rid, "cat": "MCP 설정", "w": w, "file": rel, "line": text.count("\n", 0, max(i, 0)) + 1,
+                    "count": 1, "desc": desc, "fix": fix, "snippet": mask(snip)})
+
+    for name, s in servers.items():
+        if not isinstance(s, dict):
+            continue
+        cmd = str(s.get("command", ""))
+        args = [str(a) for a in s["args"]] if isinstance(s.get("args"), list) else []
+        line = " ".join([name + ":", cmd] + args)
+        exe = os.path.basename(cmd)
+        if exe in ("sh", "bash", "zsh", "cmd", "powershell", "pwsh"):
+            add(name, "MCP-SHELL", 30, "MCP 서버를 셸로 실행 (명령 주입·원격 실행에 쓰이기 쉬움)", "직접 실행 파일/패키지를 지정", line)
+        if exe in ("npx", "bunx", "pnpx", "uvx", "pipx"):
+            pkgs = [a for a in args if not a.startswith("-")]
+            if pkgs and not re.search(r"[^@]@\d|==\d", pkgs[0]):
+                add(name, "MCP-UNPIN", 15, "버전을 고정하지 않은 패키지를 실행 (업데이트로 악성 코드가 들어올 수 있음)",
+                    "패키지@정확한버전으로 고정", line)
+        url = str(s.get("url", ""))
+        if url.startswith("http://") and not re.match(r"http://(localhost|127\.0\.0\.1)\b", url):
+            add(name, "MCP-HTTP", 20, "암호화되지 않은 원격 MCP 주소", "https 사용", f"{name}: {url}")
+        elif url.startswith("https://"):
+            add(name, "MCP-REMOTE", 10, "외부 원격 MCP 서버 사용 (도구 설명·응답을 외부가 통제)", "운영 주체와 신뢰 여부 확인", f"{name}: {url}")
+        env = s.get("env") if isinstance(s.get("env"), dict) else {}
+        for k, v in env.items():
+            v = str(v)
+            if SECRET_RE.search(v) or (re.search(r"KEY|TOKEN|SECRET|PASSWORD", k, re.I) and v and not v.startswith("$")):
+                add(name, "MCP-SECRET", 25, "설정 파일에 키·토큰이 직접 적혀 있음", "환경변수 참조로 바꾸고 이미 노출됐다면 키 폐기", f"{name}.env.{k} = [REDACTED]")
+    return out
+
+
 def scan_file(path, rel):
+    """Return (findings, sha256 of the text) for one file; ([], None) if unreadable."""
     try:
         with open(path, encoding="utf-8") as f:
             text = f.read()
     except (UnicodeDecodeError, OSError):
-        return []
-    out = []
+        return [], None
+    sha = hashlib.sha256(text.encode()).hexdigest()
+    out = scan_mcp(text, rel) if rel.lower().endswith(".json") and "mcpServers" in text else []
     for rid, cat, w, rx, desc, fix in RULES:
         if rid == "PI-HIDE" and not rel.lower().endswith(".md"):
             continue
         m = next((x for x in rx.finditer(text) if not (cat == "프롬프트 인젝션" and (
             NEG.search(text[max(text.rfind("\n", 0, x.start()), x.start() - 40):x.start()])
-            or text[x.start() - 1:x.start()] in "\"'`“‘"))), None)
+            or (x.start() > 0 and text[x.start() - 1] in "\"'`“‘")))), None)
         if m:
             ls = text.rfind("\n", 0, m.start()) + 1
             le = text.find("\n", m.start())
-            out.append({"id": rid, "cat": cat, "w": w // 2 if cat in CODE_CATS and rel.lower().endswith(".md") else w, "file": rel, "line": text.count("\n", 0, m.start()) + 1,
+            out.append({"id": rid, "cat": cat, "w": w // 2 if cat in CODE_CATS and rel.lower().endswith(".md") else w,
+                        "file": rel, "line": text.count("\n", 0, m.start()) + 1,
                         "count": len(rx.findall(text)), "desc": desc, "fix": fix,
                         "snippet": mask(text[ls:le if le != -1 else None].strip())})
-    return out
+    return out, sha
 
 
 def scan(root):
-    """Scan text files under root (symlinks not followed). Returns report dict."""
+    """Scan text files under root (symlinks not followed). Returns report dict incl. per-file hashes."""
     root = os.path.realpath(root)
-    findings, n = [], 0
+    findings, hashes = [], {}
     for d, dirs, files in os.walk(root, followlinks=False):
         dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
         for name in files:
@@ -90,27 +138,22 @@ def scan(root):
             if (os.path.splitext(name)[1].lower() not in TEXT_EXT or DENY_NAMES.match(name)
                     or os.path.islink(p) or os.path.getsize(p) > MAX_BYTES):
                 continue
-            n += 1
-            findings += scan_file(p, os.path.relpath(p, root))
+            rel = os.path.relpath(p, root)
+            fs, sha = scan_file(p, rel)
+            findings += fs
+            if sha:
+                hashes[rel] = sha
     # one weight per category so a noisy category can't drown the others; total capped at 100
     by = {}
     for f in findings:
         by[f["cat"]] = max(by.get(f["cat"], 0), f["w"])
     score = min(sum(by.values()), 100)
-    return {"root": root, "files": n, "score": score, "level": level(score),
+    return {"root": root, "files": len(hashes), "score": score, "level": level(score), "hashes": hashes,
             "findings": sorted(findings, key=lambda f: -f["w"])}
 
 
 def level(s):
     return "위험" if s >= 60 else "주의" if s >= 20 else "양호"
-
-
-if __name__ == "__main__":
-    import sys
-    r = scan(sys.argv[1])
-    print(f"{r['level']} {r['score']}/100  ({r['files']} files)  {r['root']}")
-    for f in r["findings"]:
-        print(f"  [{f['id']}] {f['file']}:{f['line']} x{f['count']}  {f['desc']}\n      {f['snippet']}")
 
 
 def scan_each(root):
@@ -119,3 +162,14 @@ def scan_each(root):
     res = [scan(os.path.join(root, d)) for d in sorted(os.listdir(root))
            if os.path.isdir(os.path.join(root, d)) and d not in SKIP_DIRS and not os.path.islink(os.path.join(root, d))]
     return sorted(res, key=lambda r: -r["score"])
+
+
+if __name__ == "__main__":
+    import sys
+    r = scan(sys.argv[1])
+    if "--json" in sys.argv:
+        print(json.dumps({k: v for k, v in r.items() if k != "hashes"}, ensure_ascii=False, indent=2))
+    else:
+        print(f"{r['level']} {r['score']}/100  ({r['files']} files)  {r['root']}")
+        for f in r["findings"]:
+            print(f"  [{f['id']}] {f['file']}:{f['line']} x{f['count']}  {f['desc']}\n      {f['snippet']}")

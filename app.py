@@ -6,8 +6,11 @@ import subprocess
 import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import llm
+import pins
 from scanner import scan, scan_each
 
+PORT = int(os.environ.get("SKILL_SCAN_PORT", 8000))
 HOME = os.path.realpath(os.path.expanduser("~"))
 SKILLS = os.path.join(HOME, ".claude", "skills")
 GH_RE = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+?(\.git)?/?$")
@@ -43,7 +46,8 @@ def resolve(target):
 
 def view(r):
     return {"name": os.path.basename(r["root"]) if not r["root"].endswith("/r") else "repository",
-            "score": r["score"], "level": r["level"], "files": r["files"], "findings": r["findings"][:25]}
+            "score": r["score"], "level": r["level"], "files": r["files"], "findings": r["findings"][:25],
+            "diff": r.get("diff")}
 
 
 class H(BaseHTTPRequestHandler):
@@ -55,7 +59,7 @@ class H(BaseHTTPRequestHandler):
 
     def _host_ok(self):
         # blocks DNS rebinding: a web page cannot reach this server under its own hostname
-        return self.headers.get("Host") in ("127.0.0.1:8000", "localhost:8000")
+        return self.headers.get("Host") in (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
 
     def do_GET(self):
         self._send(PAGE, "text/html") if self._host_ok() else self._send("bad host", "text/plain", 403)
@@ -65,18 +69,24 @@ class H(BaseHTTPRequestHandler):
             return self._send("bad request", "text/plain", 400)
         try:
             n = int(self.headers.get("Content-Length", 0))
-            target = str(json.loads(self.rfile.read(min(n, 2000))).get("target", "")).strip()
+            req = json.loads(self.rfile.read(min(n, 2000)))
+            target = str(req.get("target", "")).strip()
             results, tmp = resolve(target)
         except ValueError as e:
             return self._send(json.dumps({"error": str(e)}), "application/json")
         except (TypeError, AttributeError):
             return self._send("bad json", "text/plain", 400)
         try:
-            self._send(json.dumps({"results": [view(r) for r in results]}), "application/json")
+            if target != "@sample":
+                for r in results:
+                    # a clone lives in a fresh temp dir each time, so key repos by their URL
+                    r["diff"] = pins.check(target if GH_RE.match(target) else r["root"], r["hashes"], bool(req.get("pin")))
+            judged = llm.enrich(results) if req.get("llm") else None
+            self._send(json.dumps({"results": [view(r) for r in results], "judged": judged}), "application/json")
         finally:
             if tmp:
                 shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("127.0.0.1", 8000), H).serve_forever()
+    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

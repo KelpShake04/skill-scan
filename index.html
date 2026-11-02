@@ -53,6 +53,12 @@ pre{margin:8px 0 6px;padding:9px 12px;background:var(--code);border-radius:8px;o
 .empty{color:var(--mute);padding:14px 0}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:8px}
 @keyframes s{to{transform:rotate(360deg)}}
+.opt{display:block;margin:12px 0 0;font-size:13.5px;color:var(--mute)}
+.pill{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:99px;background:var(--mid-bg);color:var(--mid);white-space:nowrap}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}.pill.hi{background:var(--hi-bg);color:var(--hi)}
+.llm{margin-top:6px;font-size:13px}.llm .pill{margin-right:6px}
+.tools button{padding:4px 12px;font-size:13px;margin-left:6px}
+.note{color:var(--mute);font-size:12.5px;margin:4px 2px}
 .msg{margin:22px 0;color:var(--mute)}.err{color:var(--hi)}
 @media(max-width:600px){#sum{grid-template-columns:repeat(2,1fr)}.meter{display:none}.bar{flex-direction:column}}
 </style>
@@ -72,6 +78,7 @@ pre{margin:8px 0 6px;padding:9px 12px;background:var(--code);border-radius:8px;o
     <button data-t="@installed">🖥 내 PC에 설치된 skill 전체</button>
     <button data-t="@sample">☠ 악성 샘플 (데모)</button>
   </div>
+  <label class="opt"><input type="checkbox" id="llm"> 로컬 LLM 재판정 (Ollama, 상위 8건, 수십 초 걸림 · 참고용이며 점수에는 반영되지 않음)</label>
   <p class="hint">GitHub 저장소(공개) · 홈 폴더 안의 폴더만 입력할 수 있습니다. 저장소는 내려받는 데 수십 초 걸릴 수 있습니다.</p>
 </div>
 
@@ -82,27 +89,35 @@ pre{margin:8px 0 6px;padding:9px 12px;background:var(--code);border-radius:8px;o
 const $=s=>document.querySelector(s), out=$('#out'), sum=$('#sum');
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cls=l=>l==='위험'?'hi':l==='주의'?'mid':'ok';
-let busy=false, hideOk=true, last=null;
+let busy=false, hideOk=true, last=null, lastTarget='', judged=null;
 
-async function run(target){
+async function run(target,pin=false){
   if(busy||!target.trim())return; busy=true;
   document.querySelectorAll('button').forEach(b=>b.disabled=true);
-  sum.innerHTML=''; out.innerHTML='<p class="msg"><span class="spin"></span>점검 중...</p>';
+  sum.innerHTML=''; out.innerHTML='<p class="msg"><span class="spin"></span>점검 중...'+($('#llm').checked?' (LLM 판정 포함, 1분 가까이 걸릴 수 있습니다)':'')+'</p>';
   try{
-    const r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target})});
+    const r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target,pin,llm:$('#llm').checked})});
     const d=await r.json();
     if(d.error){out.innerHTML=`<p class="msg err">${esc(d.error)}</p>`;}
-    else{last=d.results;hideOk=d.results.length>6;render();}
+    else{last=d.results;judged=d.judged;lastTarget=target;hideOk=d.results.length>6;render();}
   }catch(e){out.innerHTML='<p class="msg err">요청에 실패했습니다.</p>';}
   busy=false; document.querySelectorAll('button').forEach(b=>b.disabled=false);
 }
 
 function finding(f){return `<div class="f"><div class="t"><span class="id">${esc(f.id)}</span><b>${esc(f.desc)}</b></div>
 <div class="cat">${esc(f.cat)} · <span class="loc">${esc(f.file)}:${f.line}</span> · ${f.count}곳</div>
-<pre>${esc(f.snippet)}</pre><div class="fix">조치: ${esc(f.fix)}</div></div>`;}
+<pre>${esc(f.snippet)}</pre><div class="fix">조치: ${esc(f.fix)}</div>${f.llm?`<div class="llm"><span class="pill ${f.llm.verdict==='benign'?'ok':f.llm.verdict==='malicious'?'hi':''}">LLM ${{benign:'정상 가능성',suspicious:'의심',malicious:'악성 가능성'}[f.llm.verdict]}</span>${esc(f.llm.reason)}</div>`:''}</div>`;}
 
+function diffPill(d){
+  if(!d)return '';
+  if(d.status==='changed')return `<span class="pill" title="${esc([...d.changed.map(f=>'수정 '+f),...d.added.map(f=>'추가 '+f),...d.removed.map(f=>'삭제 '+f)].join('\n'))}">변경됨 ${d.changed.length+d.added.length+d.removed.length}</span>`;
+  return d.status==='same'?'<span class="pill ok">기준선과 동일</span>':'<span class="pill ok">기준선 저장</span>';}
+function dl(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();}
+function exportJson(){dl('skill-scan-report.json',JSON.stringify(last,null,2),'application/json');}
+function exportHtml(){const css=document.querySelector('style').textContent;
+  dl('skill-scan-report.html',`<!doctype html><meta charset=utf-8><title>Skill Scan 리포트</title><style>${css}</style><main><h1>Skill Scan 리포트</h1><p class=sub>${esc(new Date().toLocaleString())} · ${esc(lastTarget)}</p>${sum.outerHTML}${last.map(card).join('').replace(/<details/g,'<details open')}</main>`,'text/html');}
 function card(x){const c=cls(x.level);
-  return `<details class="card res ${c}"><summary><span class="badge">${esc(x.level)}</span><span class="name">${esc(x.name)}</span>
+  return `<details class="card res ${c}"><summary><span class="badge">${esc(x.level)}</span><span class="name">${esc(x.name)}</span>${diffPill(x.diff)}
   <span class="meta">파일 ${x.files} · 탐지 ${x.findings.length}</span><span class="meter"><i style="width:${x.score}%"></i></span><span class="score">${x.score}</span></summary>
   <div class="body">${x.findings.map(finding).join('')||'<p class="empty">탐지된 신호 없음 (안전을 보장하지는 않음)</p>'}</div></details>`;}
 
@@ -111,9 +126,12 @@ function render(){
   sum.innerHTML=[['점검 대상',last.length,''],['위험',n('위험'),'hi'],['주의',n('주의'),'mid'],['양호',n('양호'),'ok']]
     .map(([k,v,c])=>`<div class="tile ${c}"><b>${v}</b><span>${k}</span></div>`).join('');
   const shown=hideOk?last.filter(x=>x.level!=='양호'):last;
-  out.innerHTML=(last.length>6?`<div class="tools"><span>점수 높은 순</span><label><input type="checkbox" id="h" ${hideOk?'checked':''}> 양호 숨기기</label></div>`:'')+
+  out.innerHTML=`<div class="tools"><span>점수 높은 순${last.length>6?` · <label><input type="checkbox" id="h" ${hideOk?'checked':''}> 양호 숨기기</label>`:''}</span>
+    <span><button id="ej">JSON 저장</button><button id="eh">HTML 저장</button>${lastTarget!=='@sample'?'<button id="rp" title="현재 파일 상태를 정상 기준으로 저장">기준선 재설정</button>':''}</span></div>`+
+    (judged!=null?`<p class="note">로컬 LLM이 상위 ${judged}건을 재판정했습니다. 점검 대상 문서가 LLM을 속이려 할 수 있어 점수에는 반영하지 않습니다.</p>`:'')+
     (shown.map(card).join('')||'<p class="msg">위험·주의 항목이 없습니다.</p>');
   const h=$('#h'); if(h)h.onchange=()=>{hideOk=h.checked;render();};
+  $('#ej').onclick=exportJson; $('#eh').onclick=exportHtml; const rp=$('#rp'); if(rp)rp.onclick=()=>run(lastTarget,true);
   const first=out.querySelector('details'); if(first&&last.length<=3)first.open=true;
 }
 
