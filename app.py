@@ -13,27 +13,7 @@ SKILLS = os.path.join(HOME, ".claude", "skills")
 GH_RE = re.compile(r"^https://github\.com/[\w.-]+/[\w.-]+?(\.git)?/?$")
 BLOCKED_PARTS = {".ssh", ".aws", ".gnupg", ".kube", "Keychains", ".config", ".docker"}
 
-PAGE = """<!doctype html><meta charset=utf-8><title>Skill Scan</title>
-<style>body{font:15px system-ui;max-width:860px;margin:36px auto;padding:0 16px}input{width:70%;padding:8px}
-button{padding:8px 12px;margin:2px}.c{border:1px solid #ddd;border-radius:8px;padding:8px 14px;margin:8px 0}
-.b{height:10px;background:#eee;border-radius:5px;width:140px;display:inline-block;vertical-align:middle}.b i{display:block;height:100%;border-radius:5px}
-code{background:#f4f4f4;padding:1px 4px;border-radius:3px;font-size:13px}small{color:#666}summary{cursor:pointer}</style>
-<h1>Skill Scan <small>AI skill·플러그인 공급망 보안 검사기</small></h1>
-<p>설치 전에 SKILL.md·스크립트를 정적 분석해 숨은 프롬프트 인젝션, 데이터 유출, 자격증명 접근, 원격 코드 실행, 지속성 설치를 찾습니다. 코드는 실행하지 않습니다.</p>
-<input id=t placeholder="https://github.com/owner/repo  또는  ~/내폴더/skill"> <button onclick="go(t.value)">점검</button><br>
-<button onclick="go('@installed')">내 PC에 설치된 skill 전체 점검</button>
-<button onclick="go('@sample')">악성 샘플 점검 (데모)</button>
-<div id=r></div>
-<script>
-const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const col=s=>s>=60?'#d33':s>=20?'#e90':'#2a2';
-async function go(t){r.textContent='점검 중... (GitHub 저장소는 내려받는 데 시간이 걸립니다)';
-const d=await (await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:t})})).json();
-if(d.error){r.textContent=d.error;return}
-r.innerHTML=d.results.map(x=>`<div class=c><details><summary><b style="color:${col(x.score)}">${esc(x.level)} ${x.score}</b>
-<span class=b><i style="width:${x.score}%;background:${col(x.score)}"></i></span> <b>${esc(x.name)}</b> <small>파일 ${x.files}개 · 탐지 ${x.findings.length}건</small></summary>`+
-(x.findings.map(f=>`<p><b>[${esc(f.id)}]</b> ${esc(f.cat)} — ${esc(f.desc)} <small>${esc(f.file)}:${f.line} (${f.count}곳)</small><br><code>${esc(f.snippet)}</code><br><small>조치: ${esc(f.fix)}</small></p>`).join('')||'<p>탐지된 신호 없음 (안전을 보장하지는 않음)</p>')+'</details></div>').join('');}
-</script>"""
+PAGE = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"), encoding="utf-8").read()
 
 
 def resolve(target):
