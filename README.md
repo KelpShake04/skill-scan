@@ -40,7 +40,7 @@ Windows PowerShell: `$env:SKILLS_DIR="$HOME\.claude\skills"; docker compose up -
 
 ## 구성
 
-- `scanner.py` 규칙 엔진 (9개 범주, skill별 0~100점, 파일별 SHA-256, MCP 설정 점검). CLI는 `--json` 지원
+- `scanner.py` 규칙 엔진 (10개 범주, skill별 0~100점, 파일별 SHA-256, MCP 설정 점검). CLI는 `--json` 지원
 - `pins.py` 해시 기준선: 처음 점검 때 저장(`~/.skill-scan/pins.json`), 이후 바뀐·추가·삭제된 파일을 '변경됨'으로 표시
 - `llm.py` 로컬 Ollama(`qwen3:8b`, 환경변수 `SKILL_SCAN_MODEL`)로 상위 8건 재판정. 참고용이며 점수에 반영하지 않음(점검 대상 문서가 판정 LLM을 속일 수 있으므로). 데이터는 로컬 밖으로 나가지 않음
 - `app.py` 웹 UI·API (127.0.0.1 전용, Host 헤더 검증, 경로·입력 제한, `SKILL_SCAN_PORT`로 포트 변경). UI에서 JSON/HTML 리포트 저장
@@ -49,7 +49,20 @@ Windows PowerShell: `$env:SKILLS_DIR="$HOME\.claude\skills"; docker compose up -
 
 ### MCP 설정 점검 규칙
 
-`.mcp.json` 등의 `mcpServers`에서: 셸로 실행(`MCP-SHELL`), 버전 미고정 `npx`/`uvx` 패키지(`MCP-UNPIN`), 평문 http 주소(`MCP-HTTP`), 외부 원격 서버(`MCP-REMOTE`), 설정에 직접 적힌 키·토큰(`MCP-SECRET`).
+`.mcp.json` 등의 `mcpServers`에서: 셸로 실행(`MCP-SHELL`), 버전 미고정 `npx`/`uvx` 패키지(`MCP-UNPIN`), 평문 http 주소(`MCP-HTTP`), 외부 원격 서버(`MCP-REMOTE`), 설정에 직접 적힌 키·토큰(`MCP-SECRET`), 인터프리터 인라인 코드(`node -e`, `python -c` 등에 환경변수·네트워크·실행 코드가 있을 때, `MCP-INLINE`), MCP 자리의 네트워크 도구(`curl`·`nslookup`·`dig` 등, `MCP-NETTOOL`).
+
+### Claude Code 설정 규칙
+
+`.claude/settings.json` 등에서: 권한 확인을 끄는 `defaultMode: bypassPermissions`(`PERM-BYPASS`), API 요청을 다른 서버로 보내는 `ANTHROPIC_BASE_URL`(`ENV-BASEURL`), 자동 실행되는 훅 명령(`HOOK-CMD`). 레포 설정 파일로 명령 실행·API 키 유출이 일어난 Claude Code 보안 권고(GHSA-ph6w-f82w-28w6, GHSA-jh7p-qr78-84p7 등)가 근거.
+
+### 점수 계산 메모
+
+- `.md`에서 코드 범주(유출·자격증명·원격 실행·지속성·파괴)는 산문이면 절반, ``` 코드 블록 안이면 전체 가중치.
+- 4MB 넘는 파일은 검사하지 않고 `SIZE-SKIP`(주의)로 표시한다. 조용히 건너뛰지 않는다.
+
+### 공개 벤치마크
+
+[SkillFortifyBench](https://github.com/qualixar/skillfortifybench)(MIT, 합성 540개, 벤치 표식 주석 제거본) 기준, 악성 탐지(주의 이상) **112 → 196/270**(v1.0.0 → 현재), 정상 오탐 **0/270** 유지. 형식별: Claude 7 → 63/90, MCP 49 → 77/90, OpenClaw 56/90. 공식 `anthropics/skills` 19개 중 주의 이상 1개(`claude-api`, 산문 오탐)는 변화 없음.
 
 ## 한계
 

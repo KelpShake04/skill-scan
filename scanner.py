@@ -1,3 +1,4 @@
+import bisect
 import hashlib
 import json
 import os
@@ -6,10 +7,11 @@ import re
 TEXT_EXT = {".md", ".json", ".py", ".sh", ".js", ".ts", ".mjs", ".yml", ".yaml", ".toml", ".txt", ".bash", ".zsh"}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
 DENY_NAMES = re.compile(r"^(\.env.*|id_(rsa|ed25519|ecdsa).*|.*\.(pem|key|p12)|\.npmrc|\.netrc|credentials)$", re.I)
-MAX_BYTES = 512 * 1024
+MAX_BYTES = 4 * 1024 * 1024  # bigger files are reported as SIZE-SKIP, never skipped silently
 NEG = re.compile(r"\b(never|not|don't|do not|must not|avoid|reject|treat)\b|하지 ?마", re.I)
 CODE_CATS = {"데이터 유출", "자격증명 접근", "원격 코드 실행", "지속성", "파괴적 명령"}
 SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_-]{10,}|ghp_\w{10,}|AKIA\w{12,}|xox[bp]-[\w-]{10,})")
+INLINE_RISK = re.compile(r"environ|process\.env|https?://|socket|base64|subprocess|child_process|exec|eval|urllib|requests|fetch\(")
 
 # (id, category, weight, regex, 한국어 설명, 조치)
 R = [
@@ -47,6 +49,12 @@ R = [
     ("DESTRUCT", "파괴적 명령", 25,
      r"rm\s+-[a-z]*r[a-z]*f[a-z]*\s+(~|/|\$HOME)(\s|/|$)|git push (-f|--force)|chmod\s+-?R?\s*777|mkfs\.|dd\s+if=.*of=/dev/",
      "홈·루트 삭제, 강제 push 등 되돌리기 어려운 명령", "사용자 확인 단계 없이는 사용 금지"),
+    ("PERM-BYPASS", "과도한 권한", 30, r"\"defaultMode\"\s*:\s*\"bypassPermissions\"|--permission-mode[= ]bypassPermissions",
+     "Claude Code 권한 확인을 모두 끄는 설정 (bypassPermissions)", "기본 권한 모드로 되돌리기"),
+    ("ENV-BASEURL", "데이터 유출", 35, r"\"ANTHROPIC_BASE_URL\"\s*:\s*\"",
+     "API 요청 주소를 바꾸는 설정 (API 키·대화가 다른 서버로 전송)", "설정 삭제, 이미 열었다면 API 키 폐기"),
+    ("HOOK-CMD", "지속성", 20, r"\"hooks\"\s*:\s*\{[\s\S]{0,2000}?\"command\"\s*:",
+     "Claude Code 훅: 세션 시작·도구 사용 때 명령이 자동 실행됨", "훅 명령 내용을 확인하고 필요 없으면 삭제"),
     ("PERM-WILD", "과도한 권한", 15, r"allowed-tools:\s*.*(\*|Bash\(\*\))|--dangerously-skip-permissions",
      "모든 도구/권한 승인 우회", "필요한 도구만 명시"),
     ("OBFUSC", "난독화", 20, r"[A-Za-z0-9+/=]{300,}",
@@ -84,6 +92,11 @@ def scan_mcp(text, rel):
         exe = os.path.basename(cmd)
         if exe in ("sh", "bash", "zsh", "cmd", "powershell", "pwsh"):
             add(name, "MCP-SHELL", 30, "MCP 서버를 셸로 실행 (명령 주입·원격 실행에 쓰이기 쉬움)", "직접 실행 파일/패키지를 지정", line)
+        if (exe in ("node", "python", "python3", "deno", "bun", "ruby", "perl", "php")
+                and any(a in ("-e", "-c", "--eval", "-p") for a in args) and INLINE_RISK.search(" ".join(args))):
+            add(name, "MCP-INLINE", 30, "MCP 서버 인자에 인라인 코드 (환경변수·네트워크·실행 코드 포함)", "코드를 파일로 분리해 내용 확인", line)
+        if exe in ("curl", "wget", "nc", "ncat", "nslookup", "dig", "host"):
+            add(name, "MCP-NETTOOL", 25, "MCP 서버 자리에서 네트워크 도구 실행 (외부 전송·DNS 유출)", "MCP 서버가 아니면 삭제", line)
         if exe in ("npx", "bunx", "pnpx", "uvx", "pipx"):
             pkgs = [a for a in args if not a.startswith("-")]
             if pkgs and not re.search(r"[^@]@\d|==\d", pkgs[0]):
@@ -102,6 +115,17 @@ def scan_mcp(text, rel):
     return out
 
 
+def fenced_lines(text):
+    """Line numbers inside ``` blocks of a markdown file."""
+    inside, out = False, set()
+    for i, line in enumerate(text.split("\n"), 1):
+        if line.lstrip().startswith("```"):
+            inside = not inside
+        elif inside:
+            out.add(i)
+    return out
+
+
 def scan_file(path, rel):
     """Return (findings, sha256 of the text) for one file; ([], None) if unreadable."""
     try:
@@ -111,17 +135,23 @@ def scan_file(path, rel):
         return [], None
     sha = hashlib.sha256(text.encode()).hexdigest()
     out = scan_mcp(text, rel) if rel.lower().endswith(".json") and "mcpServers" in text else []
+    # in .md only prose is halved: code in ``` blocks is what the agent will run
+    fenced = fenced_lines(text) if rel.lower().endswith(".md") else None
+    nl = [x.start() for x in re.finditer("\n", text)] if fenced else []
     for rid, cat, w, rx, desc, fix in RULES:
         if rid == "PI-HIDE" and not rel.lower().endswith(".md"):
             continue
-        m = next((x for x in rx.finditer(text) if not (cat == "프롬프트 인젝션" and (
+        ms = [x for x in rx.finditer(text) if not (cat == "프롬프트 인젝션" and (
             NEG.search(text[max(text.rfind("\n", 0, x.start()), x.start() - 40):x.start()])
-            or (x.start() > 0 and text[x.start() - 1] in "\"'`“‘")))), None)
+            or (x.start() > 0 and text[x.start() - 1] in "\"'`“‘")))]
+        m = next((x for x in ms if fenced and cat in CODE_CATS and bisect.bisect_left(nl, x.start()) + 1 in fenced),
+                 ms[0] if ms else None)
         if m:
             ls = text.rfind("\n", 0, m.start()) + 1
             le = text.find("\n", m.start())
-            out.append({"id": rid, "cat": cat, "w": w // 2 if cat in CODE_CATS and rel.lower().endswith(".md") else w,
-                        "file": rel, "line": text.count("\n", 0, m.start()) + 1,
+            ln = text.count("\n", 0, m.start()) + 1
+            out.append({"id": rid, "cat": cat, "w": w // 2 if cat in CODE_CATS and fenced is not None and ln not in fenced else w,
+                        "file": rel, "line": ln,
                         "count": len(rx.findall(text)), "desc": desc, "fix": fix,
                         "snippet": mask(text[ls:le if le != -1 else None].strip())})
     return out, sha
@@ -135,10 +165,14 @@ def scan(root):
         dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
         for name in files:
             p = os.path.join(d, name)
-            if (os.path.splitext(name)[1].lower() not in TEXT_EXT or DENY_NAMES.match(name)
-                    or os.path.islink(p) or os.path.getsize(p) > MAX_BYTES):
+            if os.path.splitext(name)[1].lower() not in TEXT_EXT or DENY_NAMES.match(name) or os.path.islink(p):
                 continue
             rel = os.path.relpath(p, root)
+            if os.path.getsize(p) > MAX_BYTES:
+                findings.append({"id": "SIZE-SKIP", "cat": "검사 누락", "w": 20, "file": rel, "line": 1, "count": 1,
+                                 "desc": f"{MAX_BYTES // (1024 * 1024)}MB 넘는 파일이라 검사하지 않음 (내용 은닉에 쓰일 수 있음)",
+                                 "fix": "직접 열어 확인하거나 불필요하면 삭제", "snippet": f"{os.path.getsize(p)} bytes"})
+                continue
             fs, sha = scan_file(p, rel)
             findings += fs
             if sha:
