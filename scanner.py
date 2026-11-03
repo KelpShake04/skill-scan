@@ -8,7 +8,8 @@ TEXT_EXT = {".md", ".json", ".py", ".sh", ".js", ".ts", ".mjs", ".yml", ".yaml",
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
 DENY_NAMES = re.compile(r"^(\.env.*|id_(rsa|ed25519|ecdsa).*|.*\.(pem|key|p12)|\.npmrc|\.netrc|credentials)$", re.I)
 MAX_BYTES = 4 * 1024 * 1024  # bigger files are reported as SIZE-SKIP, never skipped silently
-NEG = re.compile(r"\b(never|not|don't|do not|must not|avoid|reject|treat)\b|하지 ?마", re.I)
+# "do not forget to ..." is a double negative: it still tells the agent to act
+NEG = re.compile(r"\b(never|not|don't|do not|must not|avoid|reject|treat)\b(?!\s+(forget|fail|hesitate|neglect)\b)|하지 ?마", re.I)
 CODE_CATS = {"데이터 유출", "자격증명 접근", "원격 코드 실행", "지속성", "파괴적 명령"}
 SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_-]{10,}|ghp_\w{10,}|AKIA\w{12,}|xox[bp]-[\w-]{10,})")
 INLINE_RISK = re.compile(r"environ|process\.env|https?://|socket|base64|subprocess|child_process|exec|eval|urllib|requests|fetch\(")
@@ -19,7 +20,7 @@ R = [
      r"ignore (all |any )?(the )?(previous|prior|above) (instructions|rules)|disregard (all |any )?(previous|prior|the above)|이전 (지시|명령)(을|를)? 무시",
      "이전 지시를 무시하라는 문구", "해당 문구 삭제, 출처 불명이면 설치 금지"),
     ("PI-HIDE", "프롬프트 인젝션", 35,
-     r"\b(silently|secretly|covertly|quietly)\b[^.\n]{0,15}\b(run|execute|send|upload|download|install|curl)\b|(do not|don't|never) (tell|inform|mention|reveal|disclose)[^.\n]{0,25}(this|that|it|the \w+( step| script| command)?) to the user|사용자(에게)? (알리지|말하지) ?(말|마)",
+     r"\b(silently|secretly|covertly|quietly)\b[^.\n]{0,15}\b(?<!\ba )(?<!\bthe )(run|execute|send|upload|download|install|curl)\b|(do not|don't|never) (tell|inform|mention|reveal|disclose)[^.\n]{0,25}(this|that|it|the \w+( step| script| command)?) to the user|사용자(에게)? (알리지|말하지) ?(말|마)",
      "사용자 몰래 실행/숨기라는 지시", "사용자 몰래 동작하는 skill은 신뢰 불가"),
     ("PI-COMMENT", "프롬프트 인젝션", 25,
      r"<!--[^>]{0,400}?(ignore|instruction|execute|run |curl|send|upload|secret|token)[^>]{0,400}?-->",
@@ -39,9 +40,10 @@ R = [
      r"security (find|dump)-(generic|internet)-password|printenv\b|\benv\s*\|\s*(curl|nc|base64)|cat\s+[^\n|]*\.env\b",
      "키체인·환경변수·.env 덤프", "시크릿 접근 제거"),
     ("EXEC-PIPE", "원격 코드 실행", 40,
-     r"(curl|wget)[^\n|]*\|\s*(sudo\s+)?(ba|z)?sh\b|(ba|z)?sh\s+-c\s+[\"']?\$\((curl|wget)|base64\s+(-d|--decode)[^\n]*\|\s*(ba|z)?sh",
+     r"(curl|wget)\s+[^\s|][^\n|]*\|\s*(sudo\s+)?(ba|z)?sh\b|(ba|z)?sh\s+-c\s+[\"']?\$\((curl|wget)|base64\s+(-d|--decode)[^\n]*\|\s*(ba|z)?sh",
      "내려받은 코드를 검증 없이 실행", "스크립트를 받아 내용 확인 후 실행"),
-    ("EXEC-EVAL", "원격 코드 실행", 20, r"\beval\s*\(|\bexec\s*\(\s*(base64|compile|requests)|powershell[^\n]*-enc",
+    # shortcut: "eval (" with a space is not flagged (prose like "the eval (Step 0)"); revisit if attacks use it
+    ("EXEC-EVAL", "원격 코드 실행", 20, r"\beval\(|\bexec\s*\(\s*(base64|compile|requests)|powershell[^\n]*-enc",
      "동적 코드 실행/인코딩된 명령", "정적 코드로 대체"),
     ("PERSIST", "지속성", 30,
      r"crontab\b|launchctl (load|bootstrap)|LaunchAgents|>>\s*~/\.(zshrc|bashrc|profile)|authorized_keys|\.git/hooks|systemctl enable",
@@ -142,7 +144,7 @@ def scan_file(path, rel):
         if rid == "PI-HIDE" and not rel.lower().endswith(".md"):
             continue
         ms = [x for x in rx.finditer(text) if not (cat == "프롬프트 인젝션" and (
-            NEG.search(text[max(text.rfind("\n", 0, x.start()), x.start() - 40):x.start()])
+            NEG.search(text[max(text.rfind("\n", 0, x.start()) + 1, x.start() - 40):x.start()])
             or (x.start() > 0 and text[x.start() - 1] in "\"'`“‘")))]
         m = next((x for x in ms if fenced and cat in CODE_CATS and bisect.bisect_left(nl, x.start()) + 1 in fenced),
                  ms[0] if ms else None)
